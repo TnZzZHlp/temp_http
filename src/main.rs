@@ -53,7 +53,7 @@ async fn serve_file(Path(req_path): Path<String>) -> impl IntoResponse {
 #[tokio::main]
 async fn main() {
     // bind to an OS-assigned ephemeral port
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:0")
         .await
         .expect("failed to bind to address");
     let addr = listener.local_addr().expect("unable to get local addr");
