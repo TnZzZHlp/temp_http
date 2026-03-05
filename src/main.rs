@@ -1,5 +1,7 @@
 use axum::{Router, extract::Path, http::StatusCode, response::IntoResponse, routing::get};
+use if_addrs::get_if_addrs;
 use percent_encoding::percent_decode_str;
+use std::net::IpAddr;
 use std::path::{Component, Path as StdPath};
 
 /// Handler that serves files from the current directory.
@@ -57,7 +59,26 @@ async fn main() {
         .await
         .expect("failed to bind to address");
     let addr = listener.local_addr().expect("unable to get local addr");
-    println!("Listening on http://{}", addr);
+    // the listener itself is bound to 0.0.0.0 (all interfaces), so the
+    // `addr` returned here will usually be 0.0.0.0:<port>. consumers want to
+    // know which IPs on the host they can reach, though, so enumerate the
+    // local interfaces and print a line for each.
+    let port = addr.port();
+    if let Ok(ifaces) = get_if_addrs() {
+        for iface in ifaces {
+            // ignore the loopback address – people don't normally want to hit
+            // the server via 127.0.0.1/::1 from another machine.
+            match iface.ip() {
+                IpAddr::V4(ip) if !ip.is_loopback() => {
+                    println!("Listening on http://{}:{}", ip, port);
+                }
+                IpAddr::V6(ip) if !ip.is_loopback() => {
+                    println!("Listening on http://[{}]:{}", ip, port);
+                }
+                _ => {}
+            }
+        }
+    }
 
     let app = Router::new().route("/{*path}", get(serve_file));
 
