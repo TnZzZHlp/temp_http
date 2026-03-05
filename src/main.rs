@@ -1,8 +1,19 @@
 use axum::{Router, extract::Path, http::StatusCode, response::IntoResponse, routing::get};
+// bring some http helpers axum re‑exports so we don't have to depend on the
+// standalone `http` crate directly
+use axum::http::{HeaderValue, Response, header::CONTENT_TYPE};
+
 use if_addrs::get_if_addrs;
 use percent_encoding::percent_decode_str;
 use std::net::IpAddr;
 use std::path::{Component, Path as StdPath};
+
+// helper that returns a content-type for a given filename/path using the
+// mime_guess crate. it will fall back to `application/octet-stream`
+// automatically when the extension is unknown.
+fn content_type_for(path: &StdPath) -> mime::Mime {
+    mime_guess::from_path(path).first_or_octet_stream()
+}
 
 /// Handler that serves files from the current directory.
 ///
@@ -44,7 +55,16 @@ async fn serve_file(Path(req_path): Path<String>) -> impl IntoResponse {
     }
 
     match tokio::fs::read(&fs_path).await {
-        Ok(contents) => (StatusCode::OK, contents).into_response(),
+        Ok(contents) => {
+            // look up mime based on the file extension using the helper (which uses mime_guess)
+            let mime = content_type_for(&fs_path);
+            // build a response with the appropriate Content-Type header
+            let mut resp = Response::new(contents.into());
+            *resp.status_mut() = StatusCode::OK;
+            resp.headers_mut()
+                .insert(CONTENT_TYPE, HeaderValue::from_str(mime.as_ref()).unwrap());
+            resp
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             (StatusCode::NOT_FOUND, "Not Found").into_response()
         }

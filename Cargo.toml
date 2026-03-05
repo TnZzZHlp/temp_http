@@ -5,8 +5,8 @@ edition = "2024"
 
 [dependencies]
 axum = "0.8.8"
+mime_guess = "2.0.5"
+mime = "0.3.17"
 tokio = { version = "1.50.0", features = ["full"] }
 percent-encoding = "2.3.2"
-
-# list local network interfaces so we can display all of our addresses
 if-addrs = "0.15.0"
