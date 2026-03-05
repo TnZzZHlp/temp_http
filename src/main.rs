@@ -59,7 +59,7 @@ async fn main() {
     let addr = listener.local_addr().expect("unable to get local addr");
     println!("Listening on http://{}", addr);
 
-    let app = Router::new().route("/*path", get(serve_file));
+    let app = Router::new().route("/{*path}", get(serve_file));
 
     // use the convenience helper from axum to run the app
     axum::serve(listener, app).await.expect("server error");
