@@ -20,7 +20,9 @@ fn content_type_for(path: &StdPath) -> mime::Mime {
 /// Prevents path traversal by rejecting `..` components and ignores any prefix or
 /// root segment. If the requested path is a directory or empty, `index.html` is
 /// appended automatically.
-async fn serve_file(Path(req_path): Path<String>) -> impl IntoResponse {
+async fn serve_file_impl(req_path: String) -> impl IntoResponse {
+    // log raw request path so we can trace what the server receives
+    println!("requested path: {}", req_path);
     // decode percent-encoding in case paths contain spaces or other encoded chars
     let decoded = match percent_decode_str(&req_path).decode_utf8() {
         Ok(s) => s,
@@ -72,6 +74,14 @@ async fn serve_file(Path(req_path): Path<String>) -> impl IntoResponse {
     }
 }
 
+async fn serve_file(Path(req_path): Path<String>) -> impl IntoResponse {
+    serve_file_impl(req_path).await
+}
+
+async fn serve_root() -> impl IntoResponse {
+    serve_file_impl(String::new()).await
+}
+
 #[tokio::main]
 async fn main() {
     // bind to an OS-assigned ephemeral port
@@ -100,7 +110,10 @@ async fn main() {
         }
     }
 
-    let app = Router::new().route("/{*path}", get(serve_file));
+    // log each incoming request path for visibility
+    let app = Router::new()
+        .route("/{*path}", get(serve_file))
+        .route("/", get(serve_root));
 
     // use the convenience helper from axum to run the app
     axum::serve(listener, app).await.expect("server error");
