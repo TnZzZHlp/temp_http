@@ -1,12 +1,20 @@
-use axum::{Router, extract::Path, http::StatusCode, response::IntoResponse, routing::get};
+use axum::{
+    Router,
+    extract::{Path, State},
+    http::StatusCode,
+    response::IntoResponse,
+    routing::get,
+};
 // bring some http helpers axum re‑exports so we don't have to depend on the
 // standalone `http` crate directly
 use axum::http::{HeaderValue, Response, header::CONTENT_TYPE};
 
 use if_addrs::get_if_addrs;
 use percent_encoding::percent_decode_str;
+use std::env;
 use std::net::IpAddr;
-use std::path::{Component, Path as StdPath};
+use std::path::{Component, Path as StdPath, PathBuf};
+use std::sync::Arc;
 
 // helper that returns a content-type for a given filename/path using the
 // mime_guess crate. it will fall back to `application/octet-stream`
@@ -15,12 +23,12 @@ fn content_type_for(path: &StdPath) -> mime::Mime {
     mime_guess::from_path(path).first_or_octet_stream()
 }
 
-/// Handler that serves files from the current directory.
+/// Handler that serves files from the configured root directory.
 ///
 /// Prevents path traversal by rejecting `..` components and ignores any prefix or
 /// root segment. If the requested path is a directory or empty, `index.html` is
 /// appended automatically.
-async fn serve_file_impl(req_path: String) -> impl IntoResponse {
+async fn serve_file_impl(root_dir: Arc<PathBuf>, req_path: String) -> impl IntoResponse {
     // log raw request path so we can trace what the server receives
     println!("requested path: {}", req_path);
     // decode percent-encoding in case paths contain spaces or other encoded chars
@@ -51,15 +59,17 @@ async fn serve_file_impl(req_path: String) -> impl IntoResponse {
         }
     }
 
+    let mut full_path = root_dir.join(&fs_path);
+
     // if path still refers to a directory, serve its index
-    if fs_path.is_dir() {
-        fs_path.push("index.html");
+    if full_path.is_dir() {
+        full_path.push("index.html");
     }
 
-    match tokio::fs::read(&fs_path).await {
+    match tokio::fs::read(&full_path).await {
         Ok(contents) => {
             // look up mime based on the file extension using the helper (which uses mime_guess)
-            let mime = content_type_for(&fs_path);
+            let mime = content_type_for(&full_path);
             // build a response with the appropriate Content-Type header
             let mut resp = Response::new(contents.into());
             *resp.status_mut() = StatusCode::OK;
@@ -74,16 +84,39 @@ async fn serve_file_impl(req_path: String) -> impl IntoResponse {
     }
 }
 
-async fn serve_file(Path(req_path): Path<String>) -> impl IntoResponse {
-    serve_file_impl(req_path).await
+async fn serve_file(
+    State(root_dir): State<Arc<PathBuf>>,
+    Path(req_path): Path<String>,
+) -> impl IntoResponse {
+    serve_file_impl(root_dir, req_path).await
 }
 
-async fn serve_root() -> impl IntoResponse {
-    serve_file_impl(String::new()).await
+async fn serve_root(State(root_dir): State<Arc<PathBuf>>) -> impl IntoResponse {
+    serve_file_impl(root_dir, String::new()).await
 }
 
 #[tokio::main]
 async fn main() {
+    let root_dir_arg = env::args().nth(1);
+    let root_dir = match root_dir_arg {
+        Some(path) => PathBuf::from(path),
+        None => env::current_dir().expect("failed to determine current directory"),
+    };
+
+    if !root_dir.exists() {
+        panic!("root directory does not exist: {}", root_dir.display());
+    }
+
+    if !root_dir.is_dir() {
+        panic!("root path is not a directory: {}", root_dir.display());
+    }
+
+    let root_dir = Arc::new(
+        root_dir
+            .canonicalize()
+            .expect("failed to resolve root directory"),
+    );
+
     // bind to an OS-assigned ephemeral port
     let listener = tokio::net::TcpListener::bind("0.0.0.0:0")
         .await
@@ -109,11 +142,13 @@ async fn main() {
             }
         }
     }
+    println!("Serving files from {}", root_dir.display());
 
     // log each incoming request path for visibility
     let app = Router::new()
         .route("/{*path}", get(serve_file))
-        .route("/", get(serve_root));
+        .route("/", get(serve_root))
+        .with_state(root_dir);
 
     // use the convenience helper from axum to run the app
     axum::serve(listener, app).await.expect("server error");
