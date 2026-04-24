@@ -10,3 +10,4 @@ mime = "0.3.17"
 tokio = { version = "1.50.0", features = ["full"] }
 percent-encoding = "2.3.2"
 if-addrs = "0.15.0"
+clap = { version = "4", features = ["derive"] }
