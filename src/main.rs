@@ -29,6 +29,8 @@ fn content_type_for(path: &StdPath) -> mime::Mime {
 /// root segment. If the requested path is a directory or empty, `index.html` is
 /// appended automatically.
 async fn serve_file_impl(root_dir: Arc<PathBuf>, req_path: String) -> impl IntoResponse {
+    let args: Vec<String> = env::args().collect();
+
     // log raw request path so we can trace what the server receives
     println!("requested path: {}", req_path);
     // decode percent-encoding in case paths contain spaces or other encoded chars
@@ -78,7 +80,27 @@ async fn serve_file_impl(root_dir: Arc<PathBuf>, req_path: String) -> impl IntoR
             resp
         }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            (StatusCode::NOT_FOUND, "Not Found").into_response()
+            // Determine whether there is csr command line parameter
+            if args.iter().any(|arg| arg == "csr") {
+                // If the csr parameter exists, return the content of inden.html
+                let index_path = root_dir.join("inden.html");
+                match tokio::fs::read(&index_path).await {
+                    Ok(contents) => {
+                        let mime = content_type_for(&index_path);
+                        let mut resp = Response::new(contents.into());
+                        *resp.status_mut() = StatusCode::OK;
+                        resp.headers_mut()
+                            .insert(CONTENT_TYPE, HeaderValue::from_str(mime.as_ref()).unwrap());
+                        resp
+                    }
+                    Err(_) => {
+                        (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response()
+                    }
+                }
+            } else {
+                // Otherwise, return a 404 error
+                (StatusCode::NOT_FOUND, "Not Found").into_response()
+            }
         }
         Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Internal Server Error").into_response(),
     }
